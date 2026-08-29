@@ -1,0 +1,30 @@
+{
+  "CATEGORY_CODE_REQUIRED": {
+    "vi": "Mã danh mục là bắt buộc",
+    "en": "Category code is required"
+  },
+  "CATEGORY_CODE_TOO_LONG": {
+    "vi": "Mã danh mục không được vượt quá %d ký tự",
+    "en": "Category code must not exceed %d characters"
+  },
+  "CATEGORY_CODE_DUPLICATE": {
+    "vi": "Mã danh mục đã tồn tại",
+    "en": "Category code already exists"
+  },
+  "CATEGORY_NAME_REQUIRED": {
+    "vi": "Tên danh mục là bắt buộc",
+    "en": "Category name is required"
+  },
+  "CATEGORY_NAME_TOO_LONG": {
+    "vi": "Tên danh mục không được vượt quá %d ký tự",
+    "en": "Category name must not exceed %d characters"
+  },
+  "CATEGORY_DESCRIPTION_TOO_LONG": {
+    "vi": "Mô tả không được vượt quá %d ký tự",
+    "en": "Description must not exceed %d characters"
+  },
+  "CATEGORY_NOT_FOUND": {
+    "vi": "Danh mục với id %s không tồn tại",
+    "en": "Category with id %s does not exist"
+  }
+}
