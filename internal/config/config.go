@@ -18,6 +18,9 @@ type Config struct {
 	DBSSLMode  string
 
 	I18nDir string
+
+	JWTPublicKey  string
+	JWTPrivateKey string
 }
 
 func Load() (*Config, error) {
@@ -36,6 +39,9 @@ func Load() (*Config, error) {
 		DBSSLMode:  getEnv("DB_SSLMODE", "disable"),
 
 		I18nDir: getEnv("I18N_DIR", "internal"),
+
+		JWTPublicKey:  getEnv("JWT_PUBLIC_KEY", ""),
+		JWTPrivateKey: getEnv("JWT_PRIVATE_KEY", ""),
 	}
 
 	if config.DBPassword == "" {

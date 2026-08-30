@@ -5,12 +5,15 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"category-service/internal/category/model"
 	"category-service/internal/category/service"
 	"category-service/internal/category/validator"
 	"category-service/internal/i18n"
 	"category-service/internal/shared/apperror"
+	"category-service/internal/shared/httpresponse"
+	"category-service/internal/shared/pagination"
 	"category-service/internal/shared/validation"
 
 	"github.com/go-chi/chi/v5"
@@ -45,7 +48,7 @@ func (h *CategoryHandler) respondError(
 			status = http.StatusNotFound
 		}
 
-		writeJSON(
+		httpresponse.WriteJSON(
 			w,
 			status,
 			map[string]any{
@@ -60,13 +63,7 @@ func (h *CategoryHandler) respondError(
 		log.Printf("internal error: %v", err)
 	}
 
-	writeJSON(
-		w,
-		status,
-		map[string]string{
-			"error": message,
-		},
-	)
+	httpresponse.WriteError(w, status, message)
 }
 
 func classifyError(err error) (int, string) {
@@ -78,17 +75,47 @@ func classifyError(err error) (int, string) {
 	}
 }
 
+// Sample tra ve du lieu tinh, minh hoa cho endpoint public (khong yeu cau access token)
+// nam trong cung 1 handler voi cac endpoint con lai dang bi bao ve boi auth middleware.
+func (h *CategoryHandler) Sample(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	now := time.Now()
+
+	sample := &model.Category{
+		ID:        uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		Code:      "SAMPLE",
+		Name:      "Sample Category",
+		Status:    1,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	httpresponse.WriteJSON(
+		w,
+		http.StatusOK,
+		sample,
+	)
+}
+
 func (h *CategoryHandler) List(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
-	categories, err := h.service.List(r.Context())
+	params, err := pagination.Parse(r)
+	if err != nil {
+		writeBindingError(w, "invalid pagination params")
+		return
+	}
+
+	categories, err := h.service.List(r.Context(), params)
 	if err != nil {
 		h.respondError(w, r, err)
 		return
 	}
 
-	writeJSON(
+	httpresponse.WriteJSON(
 		w,
 		http.StatusOK,
 		categories,
@@ -116,7 +143,7 @@ func (h *CategoryHandler) Get(
 		return
 	}
 
-	writeJSON(
+	httpresponse.WriteJSON(
 		w,
 		http.StatusOK,
 		category,
@@ -143,7 +170,7 @@ func (h *CategoryHandler) Create(
 		return
 	}
 
-	writeJSON(
+	httpresponse.WriteJSON(
 		w,
 		http.StatusCreated,
 		category,
@@ -179,7 +206,7 @@ func (h *CategoryHandler) Update(
 		return
 	}
 
-	writeJSON(
+	httpresponse.WriteJSON(
 		w,
 		http.StatusOK,
 		category,
@@ -213,32 +240,5 @@ func writeBindingError(
 	w http.ResponseWriter,
 	message string,
 ) {
-	writeJSON(
-		w,
-		http.StatusMisdirectedRequest,
-		map[string]string{
-			"error": message,
-		},
-	)
-}
-
-func writeJSON(
-	w http.ResponseWriter,
-	status int,
-	data any,
-) {
-	w.Header().Set(
-		"Content-Type",
-		"application/json",
-	)
-
-	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		http.Error(
-			w,
-			`{"error":"failed to encode response"}`,
-			http.StatusInternalServerError,
-		)
-	}
+	httpresponse.WriteError(w, http.StatusMisdirectedRequest, message)
 }

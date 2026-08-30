@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"category-service/internal/category/model"
+	"category-service/internal/shared/pagination"
 
 	"github.com/google/uuid"
 
@@ -15,7 +16,7 @@ import (
 type CategoryRepository interface {
 	Count(ctx context.Context) (int64, error)
 
-	List(ctx context.Context) ([]*model.Category, error)
+	List(ctx context.Context, params pagination.Params) ([]*model.Category, error)
 
 	Get(ctx context.Context, id uuid.UUID) (*model.Category, error)
 
@@ -58,6 +59,7 @@ func (r *categoryRepository) Count(
 
 func (r *categoryRepository) List(
 	ctx context.Context,
+	params pagination.Params,
 ) ([]*model.Category, error) {
 	query := `
 		SELECT
@@ -72,9 +74,10 @@ func (r *categoryRepository) List(
 		FROM Category
 		WHERE DeletedAt IS NULL
 		ORDER BY CreatedAt DESC
+		LIMIT $1 OFFSET $2
 	`
 
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query, params.Take, params.Skip)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"category-service/internal/category/repository"
 	"category-service/internal/category/validator"
 	"category-service/internal/shared/apperror"
+	"category-service/internal/shared/pagination"
 	"category-service/internal/shared/validation"
 
 	"github.com/google/uuid"
@@ -17,12 +18,14 @@ import (
 
 type CategoryService interface {
 	Count(ctx context.Context) (int64, error)
-	List(ctx context.Context) ([]*model.Category, error)
+	List(ctx context.Context, params pagination.Params) ([]*model.Category, error)
 	Get(ctx context.Context, id uuid.UUID) (*model.Category, error)
 	Create(ctx context.Context, req *model.CreateCategoryRequest) (*model.Category, error)
 	Update(ctx context.Context, id uuid.UUID, req *model.UpdateCategoryRequest) (*model.Category, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }
+
+var errCategoryIDRequired = fmt.Errorf("category id is required: %w", apperror.ErrBadRequest)
 
 type categoryService struct {
 	repository repository.CategoryRepository
@@ -44,8 +47,8 @@ func (s *categoryService) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-func (s *categoryService) List(ctx context.Context) ([]*model.Category, error) {
-	categories, err := s.repository.List(ctx)
+func (s *categoryService) List(ctx context.Context, params pagination.Params) ([]*model.Category, error) {
+	categories, err := s.repository.List(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("get categories: %w", err)
 	}
@@ -59,7 +62,7 @@ func (s *categoryService) Get(
 ) (*model.Category, error) {
 
 	if id == uuid.Nil {
-		return nil, fmt.Errorf("category id is required: %w", apperror.ErrBadRequest)
+		return nil, errCategoryIDRequired
 	}
 
 	category, err := s.repository.Get(ctx, id)
@@ -107,7 +110,7 @@ func (s *categoryService) Create(ctx context.Context, req *model.CreateCategoryR
 func (s *categoryService) Update(ctx context.Context, id uuid.UUID, req *model.UpdateCategoryRequest) (*model.Category, error) {
 
 	if id == uuid.Nil {
-		return nil, fmt.Errorf("category id is required: %w", apperror.ErrBadRequest)
+		return nil, errCategoryIDRequired
 	}
 
 	if err := validator.Update(ctx, id, req, s.repository); err != nil {
@@ -138,7 +141,7 @@ func (s *categoryService) Update(ctx context.Context, id uuid.UUID, req *model.U
 func (s *categoryService) Delete(ctx context.Context, id uuid.UUID) error {
 
 	if id == uuid.Nil {
-		return fmt.Errorf("category id is required: %w", apperror.ErrBadRequest)
+		return errCategoryIDRequired
 	}
 
 	if err := s.repository.Delete(ctx, id); err != nil {
