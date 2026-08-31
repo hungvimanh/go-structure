@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -23,6 +25,8 @@ type Config struct {
 	JWTPrivateKey string
 
 	DevMode bool
+
+	RequestTimeout time.Duration
 }
 
 func Load() (*Config, error) {
@@ -46,6 +50,8 @@ func Load() (*Config, error) {
 		JWTPrivateKey: getEnv("JWT_PRIVATE_KEY", ""),
 
 		DevMode: getEnv("DEV_MODE", "0") == "1",
+
+		RequestTimeout: getEnvDurationSeconds("REQUEST_TIMEOUT_SECONDS", 10),
 	}
 
 	if config.DBPassword == "" {
@@ -53,6 +59,17 @@ func Load() (*Config, error) {
 	}
 
 	return config, nil
+}
+
+func getEnvDurationSeconds(key string, defaultSeconds int) time.Duration {
+	value := os.Getenv(key)
+
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds <= 0 {
+		seconds = defaultSeconds
+	}
+
+	return time.Duration(seconds) * time.Second
 }
 
 func getEnv(key string, defaultValue string) string {

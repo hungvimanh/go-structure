@@ -1,10 +1,13 @@
 package httpresponse
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"runtime/debug"
 
 	"category-service/internal/i18n"
 	"category-service/internal/shared/apperror"
@@ -69,6 +72,26 @@ func (r *ErrorResponder) Wrap(h HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// Recoverer la middleware chi-compatible (func(http.Handler) http.Handler) —
+// dang ky qua router.Use(errorResponder.Recoverer), phai la middleware ngoai
+// cung (dang ky truoc reqtimeout va moi middleware khac) de bat duoc panic tu
+// bat ky dau trong chain, khong rieng gi handler nghiep vu.
+// Panic duoc doi thanh error kem stack trace, roi di qua RespondError nhu moi
+// loi technical khac — nghia la van 500, van duoc logError, va chi lo stack
+// trace ra client khi devMode=true (giong moi loi technical khac, khong dac cach).
+func (r *ErrorResponder) Recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				err := fmt.Errorf("panic: %v\n%s", rec, debug.Stack())
+				r.RespondError(w, req, err)
+			}
+		}()
+
+		next.ServeHTTP(w, req)
+	})
+}
+
 // ErrorResponder chuan hoa cach tra loi khi co error, dung chung cho moi module
 // (khong rieng gi category). Moi module chi can 1 instance, tao 1 lan trong main
 // va truyen vao qua constructor cua tung handler.
@@ -89,8 +112,9 @@ func NewErrorResponder(catalog *i18n.Catalog, devMode bool) *ErrorResponder {
 //   - validation.Errors -> 400, kem danh sach loi da dich theo Accept-Language.
 //     Khong bi anh huong boi devMode vi day khong phai loi technical.
 //   - *BindingError -> 421 qua WriteBindingError (message do handler dat san).
-//   - error khac (technical) -> theo classifyError (vi du apperror.ErrBadRequest
-//     -> 400, con lai -> 500), duoc log qua logError. Neu devMode=true, message
+//   - error khac (technical) -> theo classifyError (apperror.ErrBadRequest -> 400,
+//     context.DeadlineExceeded -> 504 khi reqtimeout middleware cancel request,
+//     con lai -> 500), 500/504 duoc log qua logError. Neu devMode=true, message
 //     tra ve la err.Error() day du thay vi message chung chung.
 func (r *ErrorResponder) RespondError(w http.ResponseWriter, req *http.Request, err error) {
 	if verrs, ok := errors.AsType[validation.Errors](err); ok {
@@ -113,7 +137,7 @@ func (r *ErrorResponder) RespondError(w http.ResponseWriter, req *http.Request, 
 	}
 
 	status, message := classifyError(err)
-	if status == http.StatusInternalServerError {
+	if status == http.StatusInternalServerError || status == http.StatusGatewayTimeout {
 		r.logError(err)
 	}
 
@@ -134,6 +158,8 @@ func classifyError(err error) (int, string) {
 	switch {
 	case errors.Is(err, apperror.ErrBadRequest):
 		return http.StatusBadRequest, "bad request"
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout, "request timeout"
 	default:
 		return http.StatusInternalServerError, "internal server error"
 	}
