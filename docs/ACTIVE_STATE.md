@@ -85,6 +85,16 @@ Nguyên tắc cốt lõi: **"không có row" không phải lỗi kỹ thuật** 
 - Config: `REQUEST_TIMEOUT_SECONDS` (mặc định `10` khi không set hoặc parse lỗi, không fail-fast — khác `DB_PASSWORD`), parse trong `config.Load()` qua `getEnvDurationSeconds` thành `Config.RequestTimeout time.Duration`.
 - **Không** ảnh hưởng: `validation.Errors` (400) và `*BindingError` (421) — 2 loại này được `RespondError` nhận diện trước `classifyError`, không đi qua nhánh timeout.
 
+## Module wiring pattern
+
+- Vấn đề: `main.go` khởi tạo trực tiếp từng repository/service/handler + đăng ký route của từng module ngay trong `main()` — module càng nhiều thì `main.go` càng dài, và nhiều người cùng thêm module mới cùng lúc dễ conflict ngay tại chỗ khởi tạo/đăng ký route (dễ resolve sai, mất code).
+- Giải pháp: mỗi module tự expose 1 file wiring (`internal/<module>/module.go`, package cùng tên module) với 2 hàm:
+  - `New(deps...) *Module`: gói toàn bộ chuỗi khởi tạo `repository -> service -> handler` của module đó, trả về struct `Module` giữ handler bên trong (không export field).
+  - `(*Module) RegisterRoutes(router chi.Router, errorResponder *httpresponse.ErrorResponder, ...deps khác)`: đăng ký toàn bộ route (public lẫn protected) của module đó vào router truyền vào.
+- `main.go` chỉ còn là bootstrap chung (config/db/i18n/jwt/server timeout/graceful shutdown) + với mỗi module đúng 2 dòng: `xModule := x.New(db)` và `xModule.RegisterRoutes(router, errorResponder, ...)` — không còn biết chi tiết khởi tạo bên trong từng module.
+- Đã áp dụng cho `category`: xem `internal/category/module.go`. Đây là mẫu cho module tiếp theo — không phải refactor bắt buộc phải làm lại toàn bộ, chỉ áp dụng khi thêm module mới hoặc khi được yêu cầu.
+- Tradeoff đã biết: vẫn còn 1 điểm chèn chung trong `main.go` (chỗ gọi `New`/`RegisterRoutes`), nên chưa triệt tiêu 100% khả năng conflict khi 2 module được thêm cùng lúc — nhưng diff ở đó chỉ còn 1-2 dòng/module thay vì cả khối khởi tạo + định nghĩa route, nên nếu có conflict cũng dễ resolve đúng hơn nhiều.
+
 ## Authentication
 
 - `internal/auth`: middleware chi-compatible verify access token (JWT RS256).
@@ -110,7 +120,7 @@ Nguyên tắc cốt lõi: **"không có row" không phải lỗi kỹ thuật** 
 - `internal/category/repository`: `Get` trả `(nil, nil)` khi không có row thay vì lỗi; `ExistsByCode` hỗ trợ loại trừ id (Update).
 - `internal/category/service`: `Get`/`Update` phát hiện `category == nil` → business NotFound error.
 - `internal/category/handler`: mọi method chuyển sang chữ ký `httpresponse.HandlerFunc` (`return error` thay vì tự ghi response lỗi) — xem mục "Error handling middleware" phía trên. Handler không còn import gì liên quan xử lý lỗi (`errors`/`log`/`apperror`/`validation`/`i18n`) và không giữ field `responder` nữa — chỉ mô tả bind request → gọi service → `WriteJSON`. Đồng thời bỏ luôn nhánh đặc cách `NotFound → 404`: `Get` với id không tồn tại giờ trả **400** kèm lỗi validate (`CATEGORY_NOT_FOUND`) như mọi lỗi field khác, thay vì 404 — quyết định chủ động, không phải do quên xử lý.
-- `cmd/api/main.go`: DI thủ công (`repository.NewCategoryRepository` → `service.NewCategoryService` → `handler.NewCategoryHandler(service)`), route đăng ký qua `errorResponder.Wrap(categoryHandler.X)` (xem mục "Error handling middleware"), `chi.NewRouter()` với route group `/categories` (`GET /`, `POST /`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`), chạy qua `&http.Server{}` với timeout + graceful shutdown (xem mục "Server timeout + graceful shutdown"). `Count` chưa có route vì handler chưa có method tương ứng — quyết định chủ động không gộp vào `List` (xem mục "Tiến độ" bên dưới), nếu cần expose thì thêm route riêng khi có nhu cầu thực tế.
+- `cmd/api/main.go`: bootstrap chung (config/db/i18n/jwt) + gọi `category.New(db)` / `categoryModule.RegisterRoutes(router, errorResponder, auth.Middleware(jwtPublicKey))` — DI thủ công (`repository.NewCategoryRepository` → `service.NewCategoryService` → `handler.NewCategoryHandler(service)`) và route (`GET /`, `POST /`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}` dưới `/categories`, qua `errorResponder.Wrap(...)`) đã chuyển vào `internal/category/module.go` — xem mục "Module wiring pattern" phía trên. Chạy qua `&http.Server{}` với timeout + graceful shutdown (xem mục "Server timeout + graceful shutdown"). `Count` chưa có route vì handler chưa có method tương ứng — quyết định chủ động không gộp vào `List` (xem mục "Tiến độ" bên dưới), nếu cần expose thì thêm route riêng khi có nhu cầu thực tế.
 - `internal/auth`: middleware verify access token JWT RS256. Xem chi tiết ở mục Authentication phía trên.
 - `internal/shared/usercontext`: layer `UserContext` tách khỏi JWT, truyền qua `context.Context` xuống mọi layer. Xem mục Authentication phía trên.
 - `DEV_MODE`: env var bật/tắt lộ chi tiết lỗi technical trong response. Xem mục "DEV_MODE" phía trên.

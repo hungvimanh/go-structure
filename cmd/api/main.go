@@ -11,9 +11,7 @@ import (
 	"time"
 
 	"category-service/internal/auth"
-	"category-service/internal/category/handler"
-	"category-service/internal/category/repository"
-	"category-service/internal/category/service"
+	"category-service/internal/category"
 	"category-service/internal/config"
 	"category-service/internal/database"
 	"category-service/internal/i18n"
@@ -69,9 +67,10 @@ func main() {
 
 	errorResponder := httpresponse.NewErrorResponder(catalog, cfg.DevMode)
 
-	categoryRepository := repository.NewCategoryRepository(db)
-	categoryService := service.NewCategoryService(categoryRepository)
-	categoryHandler := handler.NewCategoryHandler(categoryService)
+	// Moi module tu chiu trach nhiem wiring (repository -> service -> handler)
+	// va route cua chinh no — xem internal/category/module.go. Them module moi
+	// chi can them 1 dong o day + 1 dong RegisterRoutes ben duoi.
+	categoryModule := category.New(db)
 
 	router := chi.NewRouter()
 
@@ -85,23 +84,7 @@ func main() {
 	// khi timeout, chi cancel context; xem internal/shared/reqtimeout.
 	router.Use(reqtimeout.Middleware(cfg.RequestTimeout))
 
-	// Public — khong yeu cau access token, minh hoa cach public 1 endpoint
-	// trong cung 1 handler voi cac endpoint con lai dang bi bao ve boi auth.
-	router.Get("/categories/sample", errorResponder.Wrap(categoryHandler.Sample))
-
-	// Protected — group rieng, chi middleware nay ap dung trong group,
-	// khong lan ra route public o tren.
-	router.Group(func(r chi.Router) {
-		r.Use(auth.Middleware(jwtPublicKey))
-
-		r.Route("/categories", func(r chi.Router) {
-			r.Get("/", errorResponder.Wrap(categoryHandler.List))
-			r.Post("/", errorResponder.Wrap(categoryHandler.Create))
-			r.Get("/{id}", errorResponder.Wrap(categoryHandler.Get))
-			r.Put("/{id}", errorResponder.Wrap(categoryHandler.Update))
-			r.Delete("/{id}", errorResponder.Wrap(categoryHandler.Delete))
-		})
-	})
+	categoryModule.RegisterRoutes(router, errorResponder, auth.Middleware(jwtPublicKey))
 
 	server := &http.Server{
 		Addr:              ":" + cfg.AppPort,
