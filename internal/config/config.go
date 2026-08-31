@@ -21,6 +21,8 @@ type Config struct {
 
 	JWTPublicKey  string
 	JWTPrivateKey string
+
+	DevMode bool
 }
 
 func Load() (*Config, error) {
@@ -42,6 +44,8 @@ func Load() (*Config, error) {
 
 		JWTPublicKey:  getEnv("JWT_PUBLIC_KEY", ""),
 		JWTPrivateKey: getEnv("JWT_PRIVATE_KEY", ""),
+
+		DevMode: getEnv("DEV_MODE", "0") == "1",
 	}
 
 	if config.DBPassword == "" {

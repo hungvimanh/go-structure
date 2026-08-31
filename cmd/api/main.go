@@ -12,6 +12,7 @@ import (
 	"category-service/internal/config"
 	"category-service/internal/database"
 	"category-service/internal/i18n"
+	"category-service/internal/shared/httpresponse"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -42,15 +43,17 @@ func main() {
 
 	log.Printf("PostgreSQL connected successfully")
 
+	errorResponder := httpresponse.NewErrorResponder(catalog, cfg.DevMode)
+
 	categoryRepository := repository.NewCategoryRepository(db)
 	categoryService := service.NewCategoryService(categoryRepository)
-	categoryHandler := handler.NewCategoryHandler(categoryService, catalog)
+	categoryHandler := handler.NewCategoryHandler(categoryService)
 
 	router := chi.NewRouter()
 
 	// Public — khong yeu cau access token, minh hoa cach public 1 endpoint
 	// trong cung 1 handler voi cac endpoint con lai dang bi bao ve boi auth.
-	router.Get("/categories/sample", categoryHandler.Sample)
+	router.Get("/categories/sample", errorResponder.Wrap(categoryHandler.Sample))
 
 	// Protected — group rieng, chi middleware nay ap dung trong group,
 	// khong lan ra route public o tren.
@@ -58,11 +61,11 @@ func main() {
 		r.Use(auth.Middleware(jwtPublicKey))
 
 		r.Route("/categories", func(r chi.Router) {
-			r.Get("/", categoryHandler.List)
-			r.Post("/", categoryHandler.Create)
-			r.Get("/{id}", categoryHandler.Get)
-			r.Put("/{id}", categoryHandler.Update)
-			r.Delete("/{id}", categoryHandler.Delete)
+			r.Get("/", errorResponder.Wrap(categoryHandler.List))
+			r.Post("/", errorResponder.Wrap(categoryHandler.Create))
+			r.Get("/{id}", errorResponder.Wrap(categoryHandler.Get))
+			r.Put("/{id}", errorResponder.Wrap(categoryHandler.Update))
+			r.Delete("/{id}", errorResponder.Wrap(categoryHandler.Delete))
 		})
 	})
 

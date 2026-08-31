@@ -15,12 +15,31 @@ Dự án tách lỗi thành 3 loại độc lập, mỗi loại do đúng 1 lớ
 
 | Loại lỗi | Ai phát hiện | Ai không được check | HTTP status | Cơ chế |
 |---|---|---|---|---|
-| **Binding / syntax** | Handler | — | 421 | Request id không parse được (`uuid.Parse`), JSON body decode lỗi. Dùng chung helper `writeBindingError`. |
-| **Business** | Service / Validator | Handler (không check syntax), Repository (không check nghiệp vụ) | 400 (field validation), 404 (not found) | `validation.Errors` (`internal/shared/validation`) — field-level, gom hết lỗi rồi mới trả, dịch qua i18n catalog. |
-| **Technical / infra** | Repository | Service, Handler (không tự phán đoán loại lỗi) | 500 | `apperror` (`internal/shared/apperror`) — sentinel errors (`ErrBadRequest`, `ErrInternal`), message chung chung trả về client, raw error log server-side qua `log.Printf`, không lộ ra ngoài. |
-| **Authentication** | Middleware (`internal/auth`) | Handler/Service/Repository (không tự verify token) | 401 | Chạy trước handler, ghi response trực tiếp qua `httpresponse.WriteError` khi thiếu/sai token — không đi qua `respondError`. Message trả về client luôn chung chung `"unauthorized"`, chi tiết lỗi log server-side qua `log.Printf`, không phân biệt "thiếu token" / "sai chữ ký" / "hết hạn" ra ngoài (tránh lộ thông tin). |
+| **Binding / syntax** | Handler | — | 421 | Request id không parse được (`uuid.Parse`), JSON body decode lỗi. Handler `return httpresponse.NewBindingError(message, cause)`, `ErrorResponder.RespondError` nhận diện và ghi 421 qua `WriteBindingError`. |
+| **Business** | Service / Validator | Handler (không check syntax), Repository (không check nghiệp vụ) | 400 (mọi `validation.Errors`, kể cả not-found) | `validation.Errors` (`internal/shared/validation`) — field-level, gom hết lỗi rồi mới trả, dịch qua i18n catalog. |
+| **Technical / infra** | Repository | Service, Handler (không tự phán đoán loại lỗi) | 400 (`ErrBadRequest`) / 500 (còn lại) | `apperror` (`internal/shared/apperror`) — sentinel errors (`ErrBadRequest`, `ErrInternal`), message chung chung trả về client, raw error log server-side qua `log.Printf`, không lộ ra ngoài **trừ khi `DEV_MODE=1`** (xem bên dưới). |
+| **Authentication** | Middleware (`internal/auth`) | Handler/Service/Repository (không tự verify token) | 401 | Chạy trước handler, ghi response trực tiếp qua `httpresponse.WriteError` khi thiếu/sai token — không đi qua `ErrorResponder.RespondError`. Message trả về client luôn chung chung `"unauthorized"`, chi tiết lỗi log server-side qua `log.Printf`, không phân biệt "thiếu token" / "sai chữ ký" / "hết hạn" ra ngoài (tránh lộ thông tin, **không** bị ảnh hưởng bởi `DEV_MODE` — 401 luôn chung chung dù dev hay production). |
 
-Nguyên tắc cốt lõi: **"không có row" không phải lỗi kỹ thuật** — repository trả `(nil, nil)` khi query không có kết quả; service tự diễn giải `nil` thành business error (`validator.NotFound` = `CATEGORY_NOT_FOUND`), không phải lỗi hạ tầng.
+### Error handling middleware — HandlerFunc + Wrap
+
+Handler không tự gọi `RespondError`/ghi response lỗi nữa — lý do: `http.Handler`/`http.HandlerFunc` chuẩn không có kênh trả lỗi (chữ ký `func(w, r)` không return gì), nên cần đổi chữ ký + 1 adapter để mô phỏng middleware xử lý lỗi tập trung.
+
+- `httpresponse.HandlerFunc` = `func(w http.ResponseWriter, r *http.Request) error`. Method handler (`CategoryHandler.Get`, `.List`, ...) theo chữ ký này: chỉ mô tả cổng vào/ra của API — bind request, gọi service, `WriteJSON` khi thành công, **return error thay vì tự ghi response lỗi**. `CategoryHandler` không còn giữ `*httpresponse.ErrorResponder` nữa (không cần, xem bên dưới).
+- `httpresponse.NewBindingError(message, cause)` trả về `*BindingError` (struct implement `error`, giữ `Cause` là error gốc như `uuid.Parse`/`json.Decode` để không mất thông tin) — handler dùng cái này cho lỗi binding/syntax thay vì gọi `WriteBindingError` trực tiếp.
+- `(*ErrorResponder).Wrap(h HandlerFunc) http.HandlerFunc`: adapter duy nhất biến `HandlerFunc` thành `http.HandlerFunc` để đăng ký với chi — gọi `h(w, r)`, nếu có error thì gọi `RespondError` 1 lần. Đây là **điểm nối** để đăng ký route: `main.go` gọi `errorResponder.Wrap(categoryHandler.Get)` thay vì đăng ký thẳng `categoryHandler.Get`.
+- `RespondError` giờ phân loại theo thứ tự: `validation.Errors` (400, dịch i18n) → `*BindingError` (421, qua `WriteBindingError`) → còn lại qua `classifyError` (400/500, có áp `DEV_MODE`).
+- Log lỗi technical (500) tách thành method riêng `(*ErrorResponder).logError(err)` (hiện chỉ `log.Printf`) — đây là **điểm duy nhất** cần sửa khi sau này muốn lưu log vào DB hoặc bắn lên queue, không phải đụng vào `RespondError` hay bất kỳ handler nào.
+- Kết quả: `category_handler.go` không còn import `errors`/`log`/`apperror`/`validation`/`i18n` gì cả, cũng không giữ field `responder` — chỉ còn phụ thuộc `service` + `httpresponse` (để `WriteJSON`/`NewBindingError`) + `pagination`/`model`. Module tương lai làm y hệt: viết handler theo `httpresponse.HandlerFunc`, đăng ký route qua `errorResponder.Wrap(...)`.
+
+### DEV_MODE
+
+- Env var `DEV_MODE` (`"0"`/`"1"`, mặc định `"0"` khi không set) — parse trong `config.Load()` thành `Config.DevMode bool` (`getEnv("DEV_MODE", "0") == "1"`), không fail-fast nếu thiếu (khác `DB_PASSWORD`).
+- Chỉ ảnh hưởng nhánh lỗi **technical** trong `ErrorResponder.RespondError` (`internal/shared/httpresponse`) — tức là mọi thứ **không phải** `validation.Errors`: khi `DevMode=true`, message trả về client là `err.Error()` đầy đủ thay vì message chung chung (`"bad request"`/`"internal server error"`) từ `classifyError`. Status code không đổi.
+- **Không** ảnh hưởng: `validation.Errors` (luôn dịch qua i18n catalog, không liên quan che/không che), lỗi binding/syntax (`httpresponse.WriteBindingError`, message vốn đã cụ thể theo call site), lỗi authentication (401 luôn `"unauthorized"` — cố ý không cho `DEV_MODE` lộ chi tiết verify token dù ở dev).
+- `ErrorResponder` nhận `devMode` qua constructor (`httpresponse.NewErrorResponder(catalog, cfg.DevMode)`, gọi 1 lần trong `main.go`) — không đọc env trực tiếp trong `httpresponse`, giữ package này không phụ thuộc `config`.
+- **Không được bật `DEV_MODE=1` ở production** — lộ chi tiết lỗi hạ tầng (ví dụ raw SQL error) ra ngoài cho client.
+
+Nguyên tắc cốt lõi: **"không có row" không phải lỗi kỹ thuật** — repository trả `(nil, nil)` khi query không có kết quả; service tự diễn giải `nil` thành business error (`validator.NotFound` = `CATEGORY_NOT_FOUND`), không phải lỗi hạ tầng. Về HTTP status, `NotFound` **không** còn được ưu tiên thành 404 — nó vẫn chỉ là 1 code trong `validation.Errors` như các lỗi field khác, trả 400 kèm message đã dịch (xem lý do ở mục "Đã xong" bên dưới).
 
 ### Validation — gom lỗi, không fail-fast
 
@@ -40,7 +59,7 @@ Nguyên tắc cốt lõi: **"không có row" không phải lỗi kỹ thuật** 
 
 - `internal/shared/pagination`: package dùng chung để module khác tái dùng, khác convention của `i18n.ParseAcceptLanguage` (nhận string thô) — `pagination.Parse` nhận thẳng `*http.Request` vì việc đọc `skip`/`take` gắn với query string.
 - `pagination.Parse(r *http.Request)`: parse `skip` và `take` **độc lập** (không fail-fast ở field đầu) rồi mới kiểm tra lỗi — chỉ khi cả hai không lỗi mới gán giá trị/default. Default `skip=0`, `take=10` (`DefaultSkip`, `DefaultTake`). `take` bị chặn trần `MaxTake=100` (âm thầm hạ xuống, không lỗi). Giá trị không parse được thành số hoặc âm (ở field nào cũng vậy) → `pagination.ErrInvalid`.
-- Handler (`CategoryHandler.List`) gọi `pagination.Parse(r)`; lỗi parse trả **421** qua `writeBindingError` — coi ngang hàng với lỗi cú pháp khác (uuid.Parse, JSON decode), không phải business error.
+- Handler (`CategoryHandler.List`) gọi `pagination.Parse(r)`; lỗi parse `return httpresponse.NewBindingError("invalid pagination params", err)` → **421** — coi ngang hàng với lỗi cú pháp khác (uuid.Parse, JSON decode), không phải business error.
 - Luồng xuống: `handler` parse → truyền `pagination.Params` qua `service.List` → `repository.List` dùng làm `LIMIT $1 OFFSET $2` trong SQL.
 
 ## Authentication
@@ -54,7 +73,7 @@ Nguyên tắc cốt lõi: **"không có row" không phải lỗi kỹ thuật** 
 - `auth.Claims` (`internal/auth/claims.go`) là struct tùy biến nhúng `jwt.RegisteredClaims`, hiện có thêm `UserID`, `Email`, `FullName` (map theo JSON key `user_id`/`email`/`full_name`) — field giả định theo yêu cầu, **chưa xác nhận với payload token thật**. Đây là **điểm nối 1**: JWT có thêm field mới thì bổ sung field + json tag vào struct này trước.
 - **`userContext` layer** (`internal/shared/usercontext`): sau khi verify, middleware map `*Claims` → `*usercontext.UserContext` qua hàm `auth.newUserContext` (**điểm nối 2** — Claims có field mới muốn lộ ra ngoài thì map thêm vào đây), rồi lưu vào `context` qua `usercontext.WithUser`. `UserContext` là struct nghiệp vụ độc lập với JWT/RSA — service/repository chỉ cần `usercontext.FromContext(ctx)`, không import `internal/auth`. Vì `context.Context` đã truyền xuyên suốt mọi layer sẵn (`r.Context()` → `service.X(ctx, ...)` → `repository.X(ctx, ...)`), lấy được `UserContext` ở bất kỳ layer nào mà không cần đổi signature hàm nào. `UserContext` cũng là chỗ mở để bổ sung dữ liệu khác về request sau này (không nhất thiết chỉ từ JWT).
 - Đã xóa `auth.ClaimsFromContext`/`withClaims` (bản nháp cũ, chưa ai dùng) — thay thế hoàn toàn bởi `usercontext` ở trên.
-- `internal/shared/httpresponse` (mới, tách từ `category/handler`): `WriteJSON`/`WriteError` dùng chung giữa `category/handler` và `auth` middleware — tránh lặp hàm ghi JSON response ở lớp thứ 2.
+- `internal/shared/httpresponse` (mới, tách từ `category/handler`): `WriteJSON`/`WriteError` dùng chung giữa `category/handler` và `auth` middleware — tránh lặp hàm ghi JSON response ở lớp thứ 2. `ErrorResponder` (struct, tạo 1 lần trong `main.go` qua `NewErrorResponder(catalog, devMode)`) cũng ở đây. Xem chi tiết cơ chế wrap-as-middleware ở mục "Error handling middleware" bên dưới.
 - Config: `JWT_PUBLIC_KEY` bắt buộc để middleware chạy được (fail-fast ở `main.go` qua `auth.LoadPublicKey`, không phải ở `config.Load()` vì lúc thêm biến giá trị còn để trống). `JWT_PRIVATE_KEY` đã có trong `Config`/`.env` nhưng **chưa được dùng ở đâu** — chỉ chuẩn bị sẵn cho tính năng issue token sau này.
 - `.env`/`.env.example`: giá trị PEM đặt trên 1 dòng, xuống dòng bằng `\n`, bọc trong dấu ngoặc kép (godotenv tự chuyển `\n` thành newline thật lúc load — không cần xử lý escape thủ công trong code).
 
@@ -67,10 +86,11 @@ Nguyên tắc cốt lõi: **"không có row" không phải lỗi kỹ thuật** 
 - `internal/category/validator`: validate đầy đủ Code/Name/Description, check trùng code qua `CodeChecker` interface (không phụ thuộc trực tiếp `repository`), business error `CATEGORY_NOT_FOUND` cho case not-found.
 - `internal/category/repository`: `Get` trả `(nil, nil)` khi không có row thay vì lỗi; `ExistsByCode` hỗ trợ loại trừ id (Update).
 - `internal/category/service`: `Get`/`Update` phát hiện `category == nil` → business NotFound error.
-- `internal/category/handler`: `respondError` phân loại lỗi (`validation.Errors` → 400/404 tùy code, còn lại qua `classifyError` → 400/500), binding error → 421 qua `writeBindingError`.
-- `cmd/api/main.go`: DI thủ công (`repository.NewCategoryRepository` → `service.NewCategoryService` → `handler.NewCategoryHandler`), `chi.NewRouter()` với route group `/categories` (`GET /`, `POST /`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`), chạy qua `http.ListenAndServe`. `Count` chưa có route vì handler chưa có method tương ứng.
+- `internal/category/handler`: mọi method chuyển sang chữ ký `httpresponse.HandlerFunc` (`return error` thay vì tự ghi response lỗi) — xem mục "Error handling middleware" phía trên. Handler không còn import gì liên quan xử lý lỗi (`errors`/`log`/`apperror`/`validation`/`i18n`) và không giữ field `responder` nữa — chỉ mô tả bind request → gọi service → `WriteJSON`. Đồng thời bỏ luôn nhánh đặc cách `NotFound → 404`: `Get` với id không tồn tại giờ trả **400** kèm lỗi validate (`CATEGORY_NOT_FOUND`) như mọi lỗi field khác, thay vì 404 — quyết định chủ động, không phải do quên xử lý.
+- `cmd/api/main.go`: DI thủ công (`repository.NewCategoryRepository` → `service.NewCategoryService` → `handler.NewCategoryHandler(service)`), route đăng ký qua `errorResponder.Wrap(categoryHandler.X)` (xem mục "Error handling middleware"), `chi.NewRouter()` với route group `/categories` (`GET /`, `POST /`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`), chạy qua `http.ListenAndServe`. `Count` chưa có route vì handler chưa có method tương ứng.
 - `internal/auth`: middleware verify access token JWT RS256. Xem chi tiết ở mục Authentication phía trên.
 - `internal/shared/usercontext`: layer `UserContext` tách khỏi JWT, truyền qua `context.Context` xuống mọi layer. Xem mục Authentication phía trên.
+- `DEV_MODE`: env var bật/tắt lộ chi tiết lỗi technical trong response. Xem mục "DEV_MODE" phía trên.
 
 ### Chưa làm (không tự ý làm nếu chưa được yêu cầu)
 - `repository.Delete` dùng `Exec` không check số row bị ảnh hưởng — xóa id không tồn tại vẫn trả 204 âm thầm, chưa có check not-found như `Get`/`Update`.

@@ -2,19 +2,13 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
-	"log"
 	"net/http"
 	"time"
 
 	"category-service/internal/category/model"
 	"category-service/internal/category/service"
-	"category-service/internal/category/validator"
-	"category-service/internal/i18n"
-	"category-service/internal/shared/apperror"
 	"category-service/internal/shared/httpresponse"
 	"category-service/internal/shared/pagination"
-	"category-service/internal/shared/validation"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -22,65 +16,15 @@ import (
 
 type CategoryHandler struct {
 	service service.CategoryService
-	catalog *i18n.Catalog
 }
 
-func NewCategoryHandler(
-	service service.CategoryService,
-	catalog *i18n.Catalog,
-) *CategoryHandler {
-	return &CategoryHandler{
-		service: service,
-		catalog: catalog,
-	}
-}
-
-func (h *CategoryHandler) respondError(
-	w http.ResponseWriter,
-	r *http.Request,
-	err error,
-) {
-	if verrs, ok := errors.AsType[validation.Errors](err); ok {
-		locale := i18n.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
-
-		status := http.StatusBadRequest
-		if len(verrs) == 1 && verrs[0].Code == validator.NotFound {
-			status = http.StatusNotFound
-		}
-
-		httpresponse.WriteJSON(
-			w,
-			status,
-			map[string]any{
-				"errors": h.catalog.TranslateAll(locale, verrs),
-			},
-		)
-		return
-	}
-
-	status, message := classifyError(err)
-	if status == http.StatusInternalServerError {
-		log.Printf("internal error: %v", err)
-	}
-
-	httpresponse.WriteError(w, status, message)
-}
-
-func classifyError(err error) (int, string) {
-	switch {
-	case errors.Is(err, apperror.ErrBadRequest):
-		return http.StatusBadRequest, "bad request"
-	default:
-		return http.StatusInternalServerError, "internal server error"
-	}
+func NewCategoryHandler(service service.CategoryService) *CategoryHandler {
+	return &CategoryHandler{service: service}
 }
 
 // Sample tra ve du lieu tinh, minh hoa cho endpoint public (khong yeu cau access token)
 // nam trong cung 1 handler voi cac endpoint con lai dang bi bao ve boi auth middleware.
-func (h *CategoryHandler) Sample(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *CategoryHandler) Sample(w http.ResponseWriter, r *http.Request) error {
 	now := time.Now()
 
 	sample := &model.Category{
@@ -97,22 +41,18 @@ func (h *CategoryHandler) Sample(
 		http.StatusOK,
 		sample,
 	)
+	return nil
 }
 
-func (h *CategoryHandler) List(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *CategoryHandler) List(w http.ResponseWriter, r *http.Request) error {
 	params, err := pagination.Parse(r)
 	if err != nil {
-		writeBindingError(w, "invalid pagination params")
-		return
+		return httpresponse.NewBindingError("invalid pagination params", err)
 	}
 
 	categories, err := h.service.List(r.Context(), params)
 	if err != nil {
-		h.respondError(w, r, err)
-		return
+		return err
 	}
 
 	httpresponse.WriteJSON(
@@ -120,27 +60,20 @@ func (h *CategoryHandler) List(
 		http.StatusOK,
 		categories,
 	)
+	return nil
 }
 
-func (h *CategoryHandler) Get(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *CategoryHandler) Get(w http.ResponseWriter, r *http.Request) error {
 	idParam := chi.URLParam(r, "id")
 
 	id, err := uuid.Parse(idParam)
 	if err != nil {
-		writeBindingError(w, "invalid category id")
-		return
+		return httpresponse.NewBindingError("invalid category id", err)
 	}
 
-	category, err := h.service.Get(
-		r.Context(),
-		id,
-	)
+	category, err := h.service.Get(r.Context(), id)
 	if err != nil {
-		h.respondError(w, r, err)
-		return
+		return err
 	}
 
 	httpresponse.WriteJSON(
@@ -148,26 +81,19 @@ func (h *CategoryHandler) Get(
 		http.StatusOK,
 		category,
 	)
+	return nil
 }
 
-func (h *CategoryHandler) Create(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *CategoryHandler) Create(w http.ResponseWriter, r *http.Request) error {
 	var req model.CreateCategoryRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeBindingError(w, "invalid request body")
-		return
+		return httpresponse.NewBindingError("invalid request body", err)
 	}
 
-	category, err := h.service.Create(
-		r.Context(),
-		&req,
-	)
+	category, err := h.service.Create(r.Context(), &req)
 	if err != nil {
-		h.respondError(w, r, err)
-		return
+		return err
 	}
 
 	httpresponse.WriteJSON(
@@ -175,35 +101,26 @@ func (h *CategoryHandler) Create(
 		http.StatusCreated,
 		category,
 	)
+	return nil
 }
 
-func (h *CategoryHandler) Update(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *CategoryHandler) Update(w http.ResponseWriter, r *http.Request) error {
 	idParam := chi.URLParam(r, "id")
 
 	id, err := uuid.Parse(idParam)
 	if err != nil {
-		writeBindingError(w, "invalid category id")
-		return
+		return httpresponse.NewBindingError("invalid category id", err)
 	}
 
 	var req model.UpdateCategoryRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeBindingError(w, "invalid request body")
-		return
+		return httpresponse.NewBindingError("invalid request body", err)
 	}
 
-	category, err := h.service.Update(
-		r.Context(),
-		id,
-		&req,
-	)
+	category, err := h.service.Update(r.Context(), id, &req)
 	if err != nil {
-		h.respondError(w, r, err)
-		return
+		return err
 	}
 
 	httpresponse.WriteJSON(
@@ -211,34 +128,21 @@ func (h *CategoryHandler) Update(
 		http.StatusOK,
 		category,
 	)
+	return nil
 }
 
-func (h *CategoryHandler) Delete(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *CategoryHandler) Delete(w http.ResponseWriter, r *http.Request) error {
 	idParam := chi.URLParam(r, "id")
 
 	id, err := uuid.Parse(idParam)
 	if err != nil {
-		writeBindingError(w, "invalid category id")
-		return
+		return httpresponse.NewBindingError("invalid category id", err)
 	}
 
-	if err := h.service.Delete(
-		r.Context(),
-		id,
-	); err != nil {
-		h.respondError(w, r, err)
-		return
+	if err := h.service.Delete(r.Context(), id); err != nil {
+		return err
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func writeBindingError(
-	w http.ResponseWriter,
-	message string,
-) {
-	httpresponse.WriteError(w, http.StatusMisdirectedRequest, message)
+	return nil
 }
