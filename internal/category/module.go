@@ -9,44 +9,42 @@ import (
 	"category-service/internal/shared/httpresponse"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/fx"
 )
 
-// Module gom toan bo wiring cua category (repository -> service -> handler) va
-// cach dang ky route. main.go chi can goi New() + RegisterRoutes(), khong can
-// biet chi tiet khoi tao ben trong — them 1 module khac (vd "product") chi them
-// 2 dong trong main.go thay vi ca khoi khoi tao + dinh nghia route nhu truoc,
-// giup giam conflict khi nhieu nguoi cung sua main.go de them module moi.
-type Module struct {
-	handler *handler.CategoryHandler
-}
+// Module gom toan bo Fx wiring cua category (provide repository -> service ->
+// handler) va dang ky route qua invoke. Them 1 module khac (vd "product") chi
+// can them 1 fx.Module tuong tu vao danh sach options trong main.go, khong
+// can biet chi tiet khoi tao ben trong.
+var Module = fx.Module("category",
+	fx.Provide(
+		repository.NewCategoryRepository,
+		service.NewCategoryService,
+		handler.NewCategoryHandler,
+	),
+	fx.Invoke(registerRoutes),
+)
 
-func New(db *pgxpool.Pool) *Module {
-	categoryRepository := repository.NewCategoryRepository(db)
-	categoryService := service.NewCategoryService(categoryRepository)
-	categoryHandler := handler.NewCategoryHandler(categoryService)
-
-	return &Module{handler: categoryHandler}
-}
-
-// RegisterRoutes dang ky ca route public (sample, khong qua authMiddleware) va
-// route protected (CRUD, qua authMiddleware) vao router truyen vao.
-func (m *Module) RegisterRoutes(
-	router chi.Router,
+// registerRoutes dang ky ca route public (sample, khong qua authMiddleware) va
+// route protected (CRUD, qua authMiddleware) vao router.
+func registerRoutes(
+	router *chi.Mux,
+	h *handler.CategoryHandler,
 	errorResponder *httpresponse.ErrorResponder,
 	authMiddleware func(http.Handler) http.Handler,
 ) {
-	router.Get("/categories/sample", errorResponder.Wrap(m.handler.Sample))
+
+	router.Get("/categories/sample", errorResponder.Wrap(h.Sample))
 
 	router.Group(func(r chi.Router) {
 		r.Use(authMiddleware)
 
 		r.Route("/categories", func(r chi.Router) {
-			r.Get("/", errorResponder.Wrap(m.handler.List))
-			r.Post("/", errorResponder.Wrap(m.handler.Create))
-			r.Get("/{id}", errorResponder.Wrap(m.handler.Get))
-			r.Put("/{id}", errorResponder.Wrap(m.handler.Update))
-			r.Delete("/{id}", errorResponder.Wrap(m.handler.Delete))
+			r.Get("/", errorResponder.Wrap(h.List))
+			r.Post("/", errorResponder.Wrap(h.Create))
+			r.Get("/{id}", errorResponder.Wrap(h.Get))
+			r.Put("/{id}", errorResponder.Wrap(h.Update))
+			r.Delete("/{id}", errorResponder.Wrap(h.Delete))
 		})
 	})
 }

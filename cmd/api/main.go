@@ -1,24 +1,13 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
-	"category-service/internal/auth"
 	"category-service/internal/category"
 	"category-service/internal/config"
-	"category-service/internal/database"
-	"category-service/internal/i18n"
-	"category-service/internal/shared/httpresponse"
-	"category-service/internal/shared/reqtimeout"
 
-	"github.com/go-chi/chi/v5"
+	"go.uber.org/fx"
 )
 
 // Cac hang so tuning o tang http.Server — hardcode giong cach posgres.go hardcode
@@ -40,97 +29,53 @@ const (
 )
 
 func main() {
-	ctx := context.Background()
-
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
 
-	db, err := database.NewPostgresPool(ctx, cfg)
-	if err != nil {
-		log.Fatalf("connect postgres: %v", err)
-	}
-	defer db.Close()
+	newApp(cfg).Run()
+}
 
-	catalog, err := i18n.LoadCatalog(cfg.I18nDir)
-	if err != nil {
-		log.Fatalf("load i18n catalog: %v", err)
-	}
+// newApp lap rap toan bo Fx app tu Config. Tach rieng khoi main() de
+// main_test.go co the fx.ValidateApp() cung 1 bo option ma khong can that su
+// Start (khong can postgres/port that).
+func newApp(cfg *config.Config) *fx.App {
+	return fx.New(appOptions(cfg))
+}
 
-	jwtPublicKey, err := auth.LoadPublicKey(cfg.JWTPublicKey)
-	if err != nil {
-		log.Fatalf("load jwt public key: %v", err)
-	}
+// appOptions gom toan bo Fx option cua app, tach rieng khoi newApp de
+// main_test.go co the fx.ValidateApp(appOptions(cfg)) — kiem tra dependency
+// graph (thieu provider, sai type, ...) ma khong can goi that constructor
+// (ValidateApp khong invoke input function), nen khong can postgres/port that.
+func appOptions(cfg *config.Config) fx.Option {
+	// Fx dung timeout nay cho ca Start (bind port) lan Stop (drain + shutdown
+	// http server) — cung khoang thoi gian voi WriteTimeout ben duoi, du de 1
+	// request dang chay khi shutdown bat dau tu ket thuc qua reqtimeout.
+	lifecycleTimeout := cfg.RequestTimeout + serverTimeoutBuffer
 
-	log.Printf("PostgreSQL connected successfully")
+	return fx.Options(
+		fx.Supply(cfg),
+		fx.StartTimeout(lifecycleTimeout),
+		fx.StopTimeout(lifecycleTimeout),
 
-	errorResponder := httpresponse.NewErrorResponder(catalog, cfg.DevMode)
+		fx.Provide(
+			providePostgresPool,
+			provideCatalog,
+			provideJWTPublicKey,
+			provideAuthMiddleware,
+			provideErrorResponder,
+			provideRouter,
+		),
 
-	// Moi module tu chiu trach nhiem wiring (repository -> service -> handler)
-	// va route cua chinh no — xem internal/category/module.go. Them module moi
-	// chi can them 1 dong o day + 1 dong RegisterRoutes ben duoi.
-	categoryModule := category.New(db)
+		// Moi module tu chiu trach nhiem provide (repository -> service ->
+		// handler) va route cua chinh no — xem internal/category/module.go.
+		// Them module moi chi can them 1 dong o day.
+		category.Module,
 
-	router := chi.NewRouter()
-
-	// Middleware ngoai cung — phai dang ky truoc de bat duoc panic tu bat ky
-	// middleware/handler nao ben trong (ke ca reqtimeout). Panic duoc doi thanh
-	// error 500 qua RespondError thay vi lam sap ca server; xem httpresponse.go.
-	router.Use(errorResponder.Recoverer)
-
-	// Ap dung cho moi route (public lan protected) — phai khai bao truoc moi
-	// route dang ky tren router nay (yeu cau cua chi). Khong tu ghi response
-	// khi timeout, chi cancel context; xem internal/shared/reqtimeout.
-	router.Use(reqtimeout.Middleware(cfg.RequestTimeout))
-
-	categoryModule.RegisterRoutes(router, errorResponder, auth.Middleware(jwtPublicKey))
-
-	server := &http.Server{
-		Addr:              ":" + cfg.AppPort,
-		Handler:           router,
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       readTimeout,
-		// WriteTimeout phai > cfg.RequestTimeout, khong thi http.Server tu cat
-		// connection truoc khi reqtimeout/ErrorResponder kip ghi xong response 504.
-		WriteTimeout: cfg.RequestTimeout + serverTimeoutBuffer,
-		IdleTimeout:  idleTimeout,
-	}
-
-	serverErrs := make(chan error, 1)
-	go func() {
-		log.Printf("Server will run on port %s", cfg.AppPort)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErrs <- err
-			return
-		}
-		close(serverErrs)
-	}()
-
-	shutdownSignalCtx, stopNotify := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopNotify()
-
-	select {
-	case err, ok := <-serverErrs:
-		if ok {
-			log.Fatalf("server error: %v", err)
-		}
-	case <-shutdownSignalCtx.Done():
-		stopNotify()
-		log.Printf("shutdown signal received, draining in-flight requests")
-
-		// Cung khoang thoi gian voi WriteTimeout: 1 request dang chay khi shutdown
-		// bat dau co the mat toi da cfg.RequestTimeout de tu ket thuc (qua reqtimeout).
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.RequestTimeout+serverTimeoutBuffer)
-		defer cancel()
-
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("graceful shutdown did not finish cleanly: %v", err)
-		} else {
-			log.Printf("server shut down gracefully")
-		}
-	}
-
-	// db.Close() (deferred o tren) chi chay sau khi Shutdown tra ve — dam bao
-	// request dang chay xong xuoi truoc khi dong connection pool.
+		// Phai invoke sau category.Module de hook OnStop cua http server
+		// duoc append sau hook dong postgres pool (xem providePostgresPool),
+		// dam bao thu tu shutdown dung.
+		fx.Invoke(registerHTTPServer),
+	)
 }
