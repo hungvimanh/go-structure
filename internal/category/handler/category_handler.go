@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"category-service/internal/category/model"
@@ -45,12 +47,57 @@ func (h *CategoryHandler) Sample(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *CategoryHandler) List(w http.ResponseWriter, r *http.Request) error {
-	params, err := pagination.Parse(r)
-	if err != nil {
-		return httpresponse.NewBindingError("invalid pagination params", err)
+	query := r.URL.Query()
+	for key := range query {
+		switch key {
+		case "skip", "take", "search":
+		default:
+			return httpresponse.NewBindingError("invalid category list params", pagination.ErrInvalid)
+		}
 	}
 
-	categories, err := h.service.List(r.Context(), params)
+	params, err := pagination.Parse(r)
+	if err != nil {
+		return httpresponse.NewBindingError("invalid category list params", err)
+	}
+
+	categoryFilter := model.CategoryFilter{}
+	if search := strings.TrimSpace(query.Get("search")); search != "" {
+		categoryFilter.Search = &search
+	}
+
+	categories, err := h.service.List(r.Context(), params, categoryFilter)
+	if err != nil {
+		return err
+	}
+
+	httpresponse.WriteJSON(
+		w,
+		http.StatusOK,
+		categories,
+	)
+	return nil
+}
+
+// Search accepts typed Category filters while preserving the list response shape.
+func (h *CategoryHandler) Search(w http.ResponseWriter, r *http.Request) error {
+	var req model.CategoryListRequest
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return httpresponse.NewBindingError("invalid category search request", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return httpresponse.NewBindingError("invalid category search request", err)
+	}
+
+	params, err := pagination.FromValues(req.Skip, req.Take)
+	if err != nil {
+		return httpresponse.NewBindingError("invalid category search request", err)
+	}
+
+	categories, err := h.service.List(r.Context(), params, req.Filter)
 	if err != nil {
 		return err
 	}

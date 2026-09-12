@@ -22,4 +22,5 @@ const (
 	Category_Code        = "code"
 	Category_Name        = "name"
 	Category_Description = "description"
+	Category_Status      = "status"
 )

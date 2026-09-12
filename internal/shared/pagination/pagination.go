@@ -22,29 +22,48 @@ type Params struct {
 func Parse(r *http.Request) (Params, error) {
 	query := r.URL.Query()
 
-	skip, skipErr := parseIntParam(query.Get("skip"), DefaultSkip)
-	take, takeErr := parseIntParam(query.Get("take"), DefaultTake)
+	skip, skipErr := parseIntParam(query.Get("skip"))
+	take, takeErr := parseIntParam(query.Get("take"))
 
 	if skipErr != nil || takeErr != nil {
 		return Params{}, ErrInvalid
 	}
 
-	if take > MaxTake {
-		take = MaxTake
-	}
-
-	return Params{Skip: skip, Take: take}, nil
+	return FromValues(skip, take)
 }
 
-func parseIntParam(raw string, defaultValue int) (int, error) {
+// FromValues applies the pagination defaults and limits to optional typed values.
+func FromValues(skip, take *int) (Params, error) {
+	resolvedSkip := DefaultSkip
+	if skip != nil {
+		resolvedSkip = *skip
+	}
+
+	resolvedTake := DefaultTake
+	if take != nil {
+		resolvedTake = *take
+	}
+
+	if resolvedSkip < 0 || resolvedTake < 0 {
+		return Params{}, ErrInvalid
+	}
+
+	if resolvedTake > MaxTake {
+		resolvedTake = MaxTake
+	}
+
+	return Params{Skip: resolvedSkip, Take: resolvedTake}, nil
+}
+
+func parseIntParam(raw string) (*int, error) {
 	if raw == "" {
-		return defaultValue, nil
+		return nil, nil
 	}
 
 	v, err := strconv.Atoi(raw)
-	if err != nil || v < 0 {
-		return 0, ErrInvalid
+	if err != nil {
+		return nil, ErrInvalid
 	}
 
-	return v, nil
+	return &v, nil
 }

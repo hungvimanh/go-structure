@@ -41,6 +41,7 @@ func registerRoutes(
 
 		r.Route("/categories", func(r chi.Router) {
 			r.Get("/", errorResponder.Wrap(h.List))
+			r.Post("/search", errorResponder.Wrap(h.Search))
 			r.Post("/", errorResponder.Wrap(h.Create))
 			r.Get("/{id}", errorResponder.Wrap(h.Get))
 			r.Put("/{id}", errorResponder.Wrap(h.Update))

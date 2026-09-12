@@ -17,8 +17,8 @@ import (
 )
 
 type CategoryService interface {
-	Count(ctx context.Context) (int64, error)
-	List(ctx context.Context, params pagination.Params) ([]*model.Category, error)
+	Count(ctx context.Context, categoryFilter model.CategoryFilter) (int64, error)
+	List(ctx context.Context, params pagination.Params, categoryFilter model.CategoryFilter) ([]*model.Category, error)
 	Get(ctx context.Context, id uuid.UUID) (*model.Category, error)
 	Create(ctx context.Context, req *model.CreateCategoryRequest) (*model.Category, error)
 	Update(ctx context.Context, id uuid.UUID, req *model.UpdateCategoryRequest) (*model.Category, error)
@@ -39,16 +39,20 @@ func NewCategoryService(
 	}
 }
 
-func (s *categoryService) Count(ctx context.Context) (int64, error) {
-	count, err := s.repository.Count(ctx)
+func (s *categoryService) Count(ctx context.Context, categoryFilter model.CategoryFilter) (int64, error) {
+	count, err := s.repository.Count(ctx, categoryFilter)
 	if err != nil {
 		return 0, fmt.Errorf("count categories: %w", err)
 	}
 	return count, nil
 }
 
-func (s *categoryService) List(ctx context.Context, params pagination.Params) ([]*model.Category, error) {
-	categories, err := s.repository.List(ctx, params)
+func (s *categoryService) List(
+	ctx context.Context,
+	params pagination.Params,
+	categoryFilter model.CategoryFilter,
+) ([]*model.Category, error) {
+	categories, err := s.repository.List(ctx, params, categoryFilter)
 	if err != nil {
 		return nil, fmt.Errorf("get categories: %w", err)
 	}
