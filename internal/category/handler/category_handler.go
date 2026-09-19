@@ -12,8 +12,8 @@ import (
 	"category-service/internal/shared/httpresponse"
 	"category-service/internal/shared/pagination"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v5"
 )
 
 type CategoryHandler struct {
@@ -26,7 +26,7 @@ func NewCategoryHandler(service service.CategoryService) *CategoryHandler {
 
 // Sample tra ve du lieu tinh, minh hoa cho endpoint public (khong yeu cau access token)
 // nam trong cung 1 handler voi cac endpoint con lai dang bi bao ve boi auth middleware.
-func (h *CategoryHandler) Sample(w http.ResponseWriter, r *http.Request) error {
+func (h *CategoryHandler) Sample(c *echo.Context) error {
 	now := time.Now()
 
 	sample := &model.Category{
@@ -38,16 +38,12 @@ func (h *CategoryHandler) Sample(w http.ResponseWriter, r *http.Request) error {
 		UpdatedAt: now,
 	}
 
-	httpresponse.WriteJSON(
-		w,
-		http.StatusOK,
-		sample,
-	)
-	return nil
+	return c.JSON(http.StatusOK, sample)
 }
 
-func (h *CategoryHandler) List(w http.ResponseWriter, r *http.Request) error {
-	query := r.URL.Query()
+func (h *CategoryHandler) List(c *echo.Context) error {
+	req := c.Request()
+	query := req.URL.Query()
 	for key := range query {
 		switch key {
 		case "skip", "take", "search":
@@ -56,7 +52,7 @@ func (h *CategoryHandler) List(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	params, err := pagination.Parse(r)
+	params, err := pagination.Parse(req)
 	if err != nil {
 		return httpresponse.NewBindingError("invalid category list params", err)
 	}
@@ -66,130 +62,98 @@ func (h *CategoryHandler) List(w http.ResponseWriter, r *http.Request) error {
 		categoryFilter.Search = &search
 	}
 
-	categories, err := h.service.List(r.Context(), params, categoryFilter)
+	categories, err := h.service.List(req.Context(), params, categoryFilter)
 	if err != nil {
 		return err
 	}
 
-	httpresponse.WriteJSON(
-		w,
-		http.StatusOK,
-		categories,
-	)
-	return nil
+	return c.JSON(http.StatusOK, categories)
 }
 
 // Search accepts typed Category filters while preserving the list response shape.
-func (h *CategoryHandler) Search(w http.ResponseWriter, r *http.Request) error {
-	var req model.CategoryListRequest
+func (h *CategoryHandler) Search(c *echo.Context) error {
+	req := c.Request()
+	var body model.CategoryListRequest
 
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(req.Body)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
+	if err := decoder.Decode(&body); err != nil {
 		return httpresponse.NewBindingError("invalid category search request", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return httpresponse.NewBindingError("invalid category search request", err)
 	}
 
-	params, err := pagination.FromValues(req.Skip, req.Take)
+	params, err := pagination.FromValues(body.Skip, body.Take)
 	if err != nil {
 		return httpresponse.NewBindingError("invalid category search request", err)
 	}
 
-	categories, err := h.service.List(r.Context(), params, req.Filter)
+	categories, err := h.service.List(req.Context(), params, body.Filter)
 	if err != nil {
 		return err
 	}
 
-	httpresponse.WriteJSON(
-		w,
-		http.StatusOK,
-		categories,
-	)
-	return nil
+	return c.JSON(http.StatusOK, categories)
 }
 
-func (h *CategoryHandler) Get(w http.ResponseWriter, r *http.Request) error {
-	idParam := chi.URLParam(r, "id")
-
-	id, err := uuid.Parse(idParam)
+func (h *CategoryHandler) Get(c *echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return httpresponse.NewBindingError("invalid category id", err)
 	}
 
-	category, err := h.service.Get(r.Context(), id)
+	category, err := h.service.Get(c.Request().Context(), id)
 	if err != nil {
 		return err
 	}
 
-	httpresponse.WriteJSON(
-		w,
-		http.StatusOK,
-		category,
-	)
-	return nil
+	return c.JSON(http.StatusOK, category)
 }
 
-func (h *CategoryHandler) Create(w http.ResponseWriter, r *http.Request) error {
+func (h *CategoryHandler) Create(c *echo.Context) error {
 	var req model.CreateCategoryRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
 		return httpresponse.NewBindingError("invalid request body", err)
 	}
 
-	category, err := h.service.Create(r.Context(), &req)
+	category, err := h.service.Create(c.Request().Context(), &req)
 	if err != nil {
 		return err
 	}
 
-	httpresponse.WriteJSON(
-		w,
-		http.StatusCreated,
-		category,
-	)
-	return nil
+	return c.JSON(http.StatusCreated, category)
 }
 
-func (h *CategoryHandler) Update(w http.ResponseWriter, r *http.Request) error {
-	idParam := chi.URLParam(r, "id")
-
-	id, err := uuid.Parse(idParam)
+func (h *CategoryHandler) Update(c *echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return httpresponse.NewBindingError("invalid category id", err)
 	}
 
 	var req model.UpdateCategoryRequest
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
 		return httpresponse.NewBindingError("invalid request body", err)
 	}
 
-	category, err := h.service.Update(r.Context(), id, &req)
+	category, err := h.service.Update(c.Request().Context(), id, &req)
 	if err != nil {
 		return err
 	}
 
-	httpresponse.WriteJSON(
-		w,
-		http.StatusOK,
-		category,
-	)
-	return nil
+	return c.JSON(http.StatusOK, category)
 }
 
-func (h *CategoryHandler) Delete(w http.ResponseWriter, r *http.Request) error {
-	idParam := chi.URLParam(r, "id")
-
-	id, err := uuid.Parse(idParam)
+func (h *CategoryHandler) Delete(c *echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return httpresponse.NewBindingError("invalid category id", err)
 	}
 
-	if err := h.service.Delete(r.Context(), id); err != nil {
+	if err := h.service.Delete(c.Request().Context(), id); err != nil {
 		return err
 	}
 
-	w.WriteHeader(http.StatusNoContent)
-	return nil
+	return c.NoContent(http.StatusNoContent)
 }

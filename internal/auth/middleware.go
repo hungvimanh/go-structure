@@ -2,36 +2,33 @@ package auth
 
 import (
 	"crypto/rsa"
-	"log"
-	"net/http"
 	"strings"
 
 	"category-service/internal/shared/httpresponse"
 	"category-service/internal/shared/usercontext"
+	"github.com/labstack/echo/v5"
 )
 
 const bearerPrefix = "Bearer "
 
-func Middleware(publicKey *rsa.PublicKey) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token, err := extractBearerToken(r)
+func Middleware(publicKey *rsa.PublicKey) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c *echo.Context) error {
+			req := c.Request()
+			token, err := extractBearerToken(req)
 			if err != nil {
-				log.Printf("unauthorized: %v", err)
-				httpresponse.WriteError(w, http.StatusUnauthorized, "unauthorized")
-				return
+				return httpresponse.NewAuthenticationError(err)
 			}
 
 			claims, err := VerifyToken(token, publicKey)
 			if err != nil {
-				log.Printf("unauthorized: %v", err)
-				httpresponse.WriteError(w, http.StatusUnauthorized, "unauthorized")
-				return
+				return httpresponse.NewAuthenticationError(err)
 			}
 
-			ctx := usercontext.WithUser(r.Context(), newUserContext(claims))
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+			ctx := usercontext.WithUser(req.Context(), newUserContext(claims))
+			c.SetRequest(req.WithContext(ctx))
+			return next(c)
+		}
 	}
 }
 

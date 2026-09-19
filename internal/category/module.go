@@ -1,14 +1,11 @@
 package category
 
 import (
-	"net/http"
-
 	"category-service/internal/category/handler"
 	"category-service/internal/category/repository"
 	"category-service/internal/category/service"
-	"category-service/internal/shared/httpresponse"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/fx"
 )
 
@@ -28,24 +25,17 @@ var Module = fx.Module("category",
 // registerRoutes dang ky ca route public (sample, khong qua authMiddleware) va
 // route protected (CRUD, qua authMiddleware) vao router.
 func registerRoutes(
-	router *chi.Mux,
+	router *echo.Echo,
 	h *handler.CategoryHandler,
-	errorResponder *httpresponse.ErrorResponder,
-	authMiddleware func(http.Handler) http.Handler,
+	authMiddleware echo.MiddlewareFunc,
 ) {
+	router.GET("/categories/sample", h.Sample)
 
-	router.Get("/categories/sample", errorResponder.Wrap(h.Sample))
-
-	router.Group(func(r chi.Router) {
-		r.Use(authMiddleware)
-
-		r.Route("/categories", func(r chi.Router) {
-			r.Get("/", errorResponder.Wrap(h.List))
-			r.Post("/search", errorResponder.Wrap(h.Search))
-			r.Post("/", errorResponder.Wrap(h.Create))
-			r.Get("/{id}", errorResponder.Wrap(h.Get))
-			r.Put("/{id}", errorResponder.Wrap(h.Update))
-			r.Delete("/{id}", errorResponder.Wrap(h.Delete))
-		})
-	})
+	categories := router.Group("/categories", authMiddleware)
+	categories.GET("/", h.List)
+	categories.POST("/search", h.Search)
+	categories.POST("/", h.Create)
+	categories.GET("/:id", h.Get)
+	categories.PUT("/:id", h.Update)
+	categories.DELETE("/:id", h.Delete)
 }

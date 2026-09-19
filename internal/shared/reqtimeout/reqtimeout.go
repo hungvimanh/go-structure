@@ -5,20 +5,22 @@ package reqtimeout
 
 import (
 	"context"
-	"net/http"
 	"time"
+
+	"github.com/labstack/echo/v5"
 )
 
 // Middleware khong tu ghi response khi timeout — no chi cancel context, con
 // lai de handler/repository tra ve context.DeadlineExceeded nhu 1 error binh
 // thuong, roi ErrorResponder.RespondError phan loai thanh 504 (xem classifyError).
-func Middleware(timeout time.Duration) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+func Middleware(timeout time.Duration) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c *echo.Context) error {
+			ctx, cancel := context.WithTimeout(c.Request().Context(), timeout)
 			defer cancel()
 
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
 	}
 }

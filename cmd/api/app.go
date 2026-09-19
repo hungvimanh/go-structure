@@ -16,8 +16,9 @@ import (
 	"category-service/internal/shared/httpresponse"
 	"category-service/internal/shared/reqtimeout"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"go.uber.org/fx"
 )
 
@@ -58,7 +59,7 @@ func provideJWTPublicKey(cfg *config.Config) (*rsa.PublicKey, error) {
 	return key, nil
 }
 
-func provideAuthMiddleware(jwtPublicKey *rsa.PublicKey) func(http.Handler) http.Handler {
+func provideAuthMiddleware(jwtPublicKey *rsa.PublicKey) echo.MiddlewareFunc {
 	return auth.Middleware(jwtPublicKey)
 }
 
@@ -66,15 +67,15 @@ func provideErrorResponder(cfg *config.Config, catalog *i18n.Catalog) *httprespo
 	return httpresponse.NewErrorResponder(catalog, cfg.DevMode)
 }
 
-func provideRouter(cfg *config.Config, errorResponder *httpresponse.ErrorResponder) *chi.Mux {
-	router := chi.NewRouter()
+func provideRouter(cfg *config.Config, errorResponder *httpresponse.ErrorResponder) *echo.Echo {
+	router := echo.New()
+	router.HTTPErrorHandler = errorResponder.HTTPErrorHandler
 
 	// Middleware ngoai cung — phai dang ky truoc de bat duoc panic tu bat ky
 	// middleware/handler nao ben trong (ke ca reqtimeout).
-	router.Use(errorResponder.Recoverer)
+	router.Use(middleware.Recover())
 
-	// Ap dung cho moi route (public lan protected) — phai khai bao truoc moi
-	// route dang ky tren router nay (yeu cau cua chi).
+	// Ap dung cho moi route (public lan protected).
 	router.Use(reqtimeout.Middleware(cfg.RequestTimeout))
 
 	return router
@@ -84,7 +85,7 @@ func provideRouter(cfg *config.Config, errorResponder *httpresponse.ErrorRespond
 // va serve trong goroutine rieng, OnStop shutdown graceful. Duoc invoke sau
 // category.Module (xem main.go) de hook OnStop cua no chay truoc hook dong
 // postgres pool.
-func registerHTTPServer(lc fx.Lifecycle, cfg *config.Config, router *chi.Mux) {
+func registerHTTPServer(lc fx.Lifecycle, cfg *config.Config, router *echo.Echo) {
 	server := &http.Server{
 		Addr:              ":" + cfg.AppPort,
 		Handler:           router,
