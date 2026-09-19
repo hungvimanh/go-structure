@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **LearningGo** (119 symbols, 269 relationships, 2 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **go-structure** (575 symbols, 1164 relationships, 37 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -24,10 +24,10 @@ This project is indexed by GitNexus as **LearningGo** (119 symbols, 269 relation
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/LearningGo/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/LearningGo/clusters` | All functional areas |
-| `gitnexus://repo/LearningGo/processes` | All execution flows |
-| `gitnexus://repo/LearningGo/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/go-structure/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/go-structure/clusters` | All functional areas |
+| `gitnexus://repo/go-structure/processes` | All execution flows |
+| `gitnexus://repo/go-structure/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

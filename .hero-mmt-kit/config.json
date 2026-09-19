@@ -1,0 +1,11 @@
+{
+  "installTasteSkill": false,
+  "version": "1.2.0",
+  "brownfield": true,
+  "integrations": {
+    "skills": "bundled",
+    "design": "skipped",
+    "gitnexus": "indexed",
+    "serena": "seeded"
+  }
+}
