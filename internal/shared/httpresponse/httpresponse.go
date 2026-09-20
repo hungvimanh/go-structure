@@ -60,7 +60,8 @@ func NewErrorResponder(catalog *i18n.Catalog, devMode bool) *ErrorResponder {
 // HTTPErrorHandler la mot diem vao duy nhat cho error tu Echo handler,
 // middleware va panic recovery. Route 404/405 duoc Echo xu ly nhu fallback.
 func (r *ErrorResponder) HTTPErrorHandler(c *echo.Context, err error) {
-	if c.Response().Committed {
+	response, unwrapErr := echo.UnwrapResponse(c.Response())
+	if unwrapErr == nil && response.Committed {
 		return
 	}
 

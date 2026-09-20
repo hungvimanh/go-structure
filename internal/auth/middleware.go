@@ -2,10 +2,12 @@ package auth
 
 import (
 	"crypto/rsa"
+	"net/http"
 	"strings"
 
 	"category-service/internal/shared/httpresponse"
 	"category-service/internal/shared/usercontext"
+
 	"github.com/labstack/echo/v5"
 )
 
