@@ -80,6 +80,18 @@ Dự án tách lỗi thành 4 loại độc lập, mỗi loại do đúng 1 lớ
 - Thiếu token, token hết hạn hoặc sai chữ ký đều trả `AuthenticationError` về centralized pipeline. Client không phân biệt nguyên nhân và luôn nhận generic 401; server log cause.
 - Chưa có login, issue/refresh token hoặc authorization theo role/permission.
 
+## Shared persistence/query boundary
+
+`internal/shared/query` và `internal/shared/repository` là framework PostgreSQL/pgx nội bộ. Module mới phải tự sở hữu descriptor tĩnh cho table/column, mapping filter sang `query.Expression`, registry search/sort/projection, scanner chính xác theo projection, extractor giá trị insert/update và predicate nghiệp vụ. Giá trị luôn được bind parameter; identifier, projection và sort key chỉ lấy từ descriptor, không lấy raw SQL từ request.
+
+- String predicate dùng literal, case-insensitive semantics. Nhiều operator active trên cùng field được nối `AND`; `combine` là nhóm `OR` nội bộ; scalar string rỗng/whitespace là no-op. `IN []` là false, `NOT IN []` là no-op; set được deduplicate trước khi bind PostgreSQL array.
+- Search rỗng là no-op. Khi có search term nhưng không chọn field, compiler dùng toàn bộ searchable field đã cấu hình. Sort phải có ID tie-breaker xác định; sort/projection key không có trong registry trả query error trước DB.
+- `EntitySpec`/`Projection` giữ explicit column + scanner, không reflection hoặc struct tag. Generic engine phù hợp Count/Exists/List/Get/Create/Update/Delete; query aggregate/analytics không vừa contract vẫn do module viết riêng bằng SQL descriptor-owned.
+- Relation replace-all nhận `RelationPatch`: absent giữ nguyên, present empty clear, present values replace sau deduplicate. Parent mutation và replacement phải cùng nằm trong `Transactor.WithinTx`; helper không tự mở transaction.
+- Category là pilot: public repository/service/handler contract giữ nguyên, `Get` missing vẫn là `nil, nil`, schema dùng snake_case (`category`, `created_at`, `deleted_at`), và list mặc định `created_at DESC, id DESC`.
+
+Không dùng ORM relationship, auto-join, reflection mapping, upsert ngầm hoặc multi-dialect abstraction. Không phải mọi SQL đều biến mất: chỉ SQL cơ học của CRUD/query động được shared framework quản lý.
+
 ## Tiến độ
 
 ### Đã xong
